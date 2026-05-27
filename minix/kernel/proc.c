@@ -1669,7 +1669,8 @@ void enqueue(
  */
 static void enqueue_head(struct proc *rp)
 {
-  const int q = rp->p_priority;	 		/* scheduling queue to use */
+  // CRIADA UMA FILA ÚNICA
+  const int q = 0;	 		/* scheduling queue to use */
 
   struct proc **rdy_head, **rdy_tail;
 
@@ -1690,11 +1691,11 @@ static void enqueue_head(struct proc *rp)
 
   /* Now add the process to the queue. */
   if (!rdy_head[q]) {		/* add to empty queue */
-	rdy_head[q] = rdy_tail[q] = rp; 	/* create a new queue */
-	rp->p_nextready = NULL;			/* mark new end */
+    rdy_head[q] = rdy_tail[q] = rp; 	/* create a new queue */
+    rp->p_nextready = NULL;			/* mark new end */
   } else {					/* add to head of queue */
-	rp->p_nextready = rdy_head[q];		/* chain head of queue */
-	rdy_head[q] = rp;			/* set new queue head */
+    rp->p_nextready = rdy_head[q];		/* chain head of queue */
+    rdy_head[q] = rp;			/* set new queue head */
   }
 
   /* Make note of when this process was added to queue */
@@ -1791,7 +1792,7 @@ static struct proc * pick_proc(void)
  * This function always uses the run queues of the local cpu!
  */
   register struct proc *rp;			/* process to run */
-  struct proc **rdy_head;
+  struct proc **rdy_head, **rdy_tail;
   int q;				/* iterate over queues */
 
   /* Check each of the scheduling queues for ready processes. The number of
@@ -1799,17 +1800,55 @@ static struct proc * pick_proc(void)
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
-  for (q=0; q < NR_SCHED_QUEUES; q++) {	
-	if(!(rp = rdy_head[q])) {
-		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
-		continue;
-	}
-	assert(proc_is_runnable(rp));
-	if (priv(rp)->s_flags & BILLABLE)	 	
-		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
-	return rp;
+  rdy_tail = get_cpulocal_var(run_q_tail);
+
+  // APENAS UMA FILA
+  q = 0;
+  if (!(rp = rdy_head[q])) {
+      TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
+      return NULL;
   }
-  return NULL;
+
+  // VERIFICANDO O NÚMERO DE PROCESSOS NA FILA
+  int process_number = 1;
+  struct proc *process = rp->p_nextready;
+  while(process != NULL){
+      process = process->p_nextready;
+      process_number++;
+  }
+
+  // SELECIONANDO QUEM VAI EXECUTAR USANDO O TSC
+  int chosen_index;
+  u64_t tsc;
+  read_tsc_64(&tsc);
+  chosen_index = (int)(tsc % process_number);
+
+  // MOVENDO O ESCOLHIDO PARA O INÍCIO DA FILA
+  if (chosen_index > 0) {
+      struct proc *prev = rdy_head[q];
+      // PERCORRENDO A FILA ATÉ ONDE SERÁ O ANTERIOR
+      for(int i = 0; i < chosen_index - 1; i++){
+          prev = prev->p_nextready;
+      }
+      rp = prev->p_nextready;
+      
+      
+      // CASO ESTEJA NA CAUDA
+      if (rp == rdy_tail[q]) {
+        rdy_tail[q] = prev;
+      }
+
+      // FAZ A MUDANÇA
+      prev->p_nextready = rp->p_nextready;
+      rp->p_nextready = rdy_head[q];
+      rdy_head[q] = rp;
+  }
+
+  assert(proc_is_runnable(rp));
+  if (priv(rp)->s_flags & BILLABLE)	 	
+      get_cpulocal_var(bill_ptr) = rp;
+  return rp;
+
 }
 
 /*===========================================================================*
