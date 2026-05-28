@@ -1604,7 +1604,10 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  int q = 0;	 		/* scheduling queue to use */
+
+  // INFELIZMENTE PRESENVA A PRIORIDADE DO KERNEL
+  int q = rp->p_priority; /* scheduling queue to use */
+  if (q >= USER_Q) q = USER_Q;	 		
   struct proc **rdy_head, **rdy_tail;
   
   assert(proc_is_runnable(rp));
@@ -1669,9 +1672,9 @@ void enqueue(
  */
 static void enqueue_head(struct proc *rp)
 {
-  // CRIADA UMA FILA ÚNICA
-  const int q = 0;	 		/* scheduling queue to use */
-
+  // INFELIZMENTE PRESERVA A PRIORIDADE DO KERNEL
+  int q = rp->p_priority; 	/* scheduling queue to use */
+  if (q >= USER_Q) q = USER_Q;	 	
   struct proc **rdy_head, **rdy_tail;
 
   assert(proc_ptr_ok(rp));
@@ -1724,7 +1727,9 @@ void dequeue(struct proc *rp)
  * This function can operate x-cpu as it always removes the process from the
  * queue of the cpu the process is currently assigned to.
  */
-  int q = 0;		/* queue to use */
+  // INFELIZMENTE PRESERVA A PRIORIDADE DO KERNEL
+  int q = rp->p_priority; 	/* scheduling queue to use */
+  if (q >= USER_Q) q = USER_Q;	 	
   struct proc **xpp;			/* iterate over queue */
   struct proc *prev_xp;
   u64_t tsc, tsc_delta;
@@ -1793,7 +1798,7 @@ static struct proc * pick_proc(void)
  */
   register struct proc *rp;			/* process to run */
   struct proc **rdy_head, **rdy_tail;
-  int q;				/* iterate over queues */
+  int q;
 
   /* Check each of the scheduling queues for ready processes. The number of
    * queues is defined in proc.h, and priorities are set in the task table.
@@ -1802,53 +1807,56 @@ static struct proc * pick_proc(void)
   rdy_head = get_cpulocal_var(run_q_head);
   rdy_tail = get_cpulocal_var(run_q_tail);
 
-  // APENAS UMA FILA
-  q = 0;
-  if (!(rp = rdy_head[q])) {
-      TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
+  for (q = 0; q < NR_SCHED_QUEUES; q++) {
+      if ((rp = rdy_head[q])) {
+          break;
+      }
+  }
+  if (q == NR_SCHED_QUEUES) {
       return NULL;
   }
+  // Se caímos na fila de usuários (USER_Q), aplicamos o sorteio aleatório
+  if (q == USER_Q) {
+    // VERIFICANDO O NÚMERO DE PROCESSOS NA FILA
+    int process_number = 1;
+    struct proc *process = rp->p_nextready;
+    while(process != NULL){
+        process = process->p_nextready;
+        process_number++;
+    }
 
-  // VERIFICANDO O NÚMERO DE PROCESSOS NA FILA
-  int process_number = 1;
-  struct proc *process = rp->p_nextready;
-  while(process != NULL){
-      process = process->p_nextready;
-      process_number++;
-  }
+    // SELECIONANDO QUEM VAI EXECUTAR USANDO O TSC
+    int chosen_index;
+    u64_t tsc;
+    read_tsc_64(&tsc);
+    chosen_index = (int)(tsc % process_number);
 
-  // SELECIONANDO QUEM VAI EXECUTAR USANDO O TSC
-  int chosen_index;
-  u64_t tsc;
-  read_tsc_64(&tsc);
-  chosen_index = (int)(tsc % process_number);
+    // MOVENDO O ESCOLHIDO PARA O INÍCIO DA FILA
+    if (chosen_index > 0) {
+        struct proc *prev = rdy_head[q];
+        // PERCORRENDO A FILA ATÉ ONDE SERÁ O ANTERIOR
+        for(int i = 0; i < chosen_index - 1; i++){
+            prev = prev->p_nextready;
+        }
+        rp = prev->p_nextready;
+        
+        
+        // CASO ESTEJA NA CAUDA
+        if (rp == rdy_tail[q]) {
+          rdy_tail[q] = prev;
+        }
 
-  // MOVENDO O ESCOLHIDO PARA O INÍCIO DA FILA
-  if (chosen_index > 0) {
-      struct proc *prev = rdy_head[q];
-      // PERCORRENDO A FILA ATÉ ONDE SERÁ O ANTERIOR
-      for(int i = 0; i < chosen_index - 1; i++){
-          prev = prev->p_nextready;
-      }
-      rp = prev->p_nextready;
-      
-      
-      // CASO ESTEJA NA CAUDA
-      if (rp == rdy_tail[q]) {
-        rdy_tail[q] = prev;
-      }
-
-      // FAZ A MUDANÇA
-      prev->p_nextready = rp->p_nextready;
-      rp->p_nextready = rdy_head[q];
-      rdy_head[q] = rp;
+        // FAZ A MUDANÇA
+        prev->p_nextready = rp->p_nextready;
+        rp->p_nextready = rdy_head[q];
+        rdy_head[q] = rp;
+    }
   }
 
   assert(proc_is_runnable(rp));
   if (priv(rp)->s_flags & BILLABLE)	 	
       get_cpulocal_var(bill_ptr) = rp;
   return rp;
-
 }
 
 /*===========================================================================*
