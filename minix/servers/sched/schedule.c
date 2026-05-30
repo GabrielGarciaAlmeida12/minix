@@ -81,29 +81,29 @@ static void pick_cpu(struct schedproc * proc)
 }
 
 /*===========================================================================*
- *				do_noquantum				     *
+ *				do_noquantum		FIFO		     *
  *===========================================================================*/
 
 int do_noquantum(message *m_ptr)
 {
-	register struct schedproc *rmp;
-	int rv, proc_nr_n;
+    register struct schedproc *rmp;
+    int rv, proc_nr_n;
 
-	if (sched_isokendpt(m_ptr->m_source, &proc_nr_n) != OK) {
-		printf("SCHED: WARNING: got an invalid endpoint in OOQ msg %u.\n",
-		m_ptr->m_source);
-		return EBADEPT;
-	}
+    if (sched_isokendpt(m_ptr->m_source, &proc_nr_n) != OK) {
+        printf("SCHED: WARNING: got an invalid endpoint in OOQ msg %u.\n",
+        m_ptr->m_source);
+        return EBADEPT;
+    }
 
-	rmp = &schedproc[proc_nr_n];
-	if (rmp->priority < MIN_USER_Q) {
-		rmp->priority += 1; /* lower priority */
-	}
+    rmp = &schedproc[proc_nr_n];
+    
+    /* FIFO: não rebaixa a prioridade, apenas renova o quantum */
+    rmp->time_slice = DEFAULT_USER_TIME_SLICE;
 
-	if ((rv = schedule_process_local(rmp)) != OK) {
-		return rv;
-	}
-	return OK;
+    if ((rv = schedule_process_local(rmp)) != OK) {
+        return rv;
+    }
+    return OK;
 }
 
 /*===========================================================================*
